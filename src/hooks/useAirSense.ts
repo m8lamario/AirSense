@@ -1,5 +1,5 @@
-import { useState, useEffect, useCallback } from 'react';
-import { io, Socket } from 'socket.io-client';
+import { useState, useEffect } from 'react';
+import Pusher from 'pusher-js';
 
 export interface AirData {
   temp: number;
@@ -9,7 +9,11 @@ export interface AirData {
   ts: string;
 }
 
-const BACKEND_URL = 'http://localhost:5000';
+const PUSHER_KEY = process.env.NEXT_PUBLIC_PUSHER_KEY ?? '';
+const PUSHER_CLUSTER = process.env.NEXT_PUBLIC_PUSHER_CLUSTER ?? '';
+const PUSHER_CHANNEL = 'airsense';
+const PUSHER_EVENT = 'new_data';
+const MAX_HISTORY = 100;
 
 export const useAirSense = () => {
   const [data, setData] = useState<AirData | null>(null);
@@ -17,55 +21,42 @@ export const useAirSense = () => {
   const [isConnected, setIsConnected] = useState(false);
   const [sessionCount, setSessionCount] = useState(0);
 
-  // Funzione per caricare lo storico iniziale
-  const fetchHistory = useCallback(async () => {
-    try {
-      const response = await fetch(`${BACKEND_URL}/api/history`);
-      if (response.ok) {
-        const historyData: AirData[] = await response.json();
-        // Prendiamo solo le ultime 50 per il grafico come richiesto
-        setHistory(historyData.slice(-50));
-      }
-    } catch (error) {
-      console.error('Errore durante il caricamento dello storico:', error);
-    }
-  }, []);
-
   useEffect(() => {
-    // Caricamento iniziale
-    fetchHistory();
+    if (!PUSHER_KEY || !PUSHER_CLUSTER) {
+      console.error('Config Pusher mancante: NEXT_PUBLIC_PUSHER_KEY e NEXT_PUBLIC_PUSHER_CLUSTER.');
+      return;
+    }
 
-    // Configurazione Socket.IO
-    const socket: Socket = io(BACKEND_URL, {
-      reconnectionAttempts: 5,
-      reconnectionDelay: 2000,
+    const pusher = new Pusher(PUSHER_KEY, {
+      cluster: PUSHER_CLUSTER,
     });
 
-    socket.on('connect', () => {
-      setIsConnected(true);
-      console.log('Connesso al server AirSense');
-    });
+    const channel = pusher.subscribe(PUSHER_CHANNEL);
 
-    socket.on('disconnect', () => {
-      setIsConnected(false);
-      console.log('Disconnesso dal server AirSense');
-    });
+    const handleStateChange = (states: { previous: string; current: string }) => {
+      setIsConnected(states.current === 'connected');
+    };
 
-    socket.on('new_data', (newData: AirData) => {
+    const handleData = (newData: AirData) => {
       setData(newData);
       setSessionCount((prev) => prev + 1);
-      
-      // Aggiorna lo storico: aggiungi il nuovo dato e tieni le ultime 50
+
       setHistory((prevHistory) => {
         const newHistory = [...prevHistory, newData];
-        return newHistory.slice(-50);
+        return newHistory.slice(-MAX_HISTORY);
       });
-    });
+    };
+
+    pusher.connection.bind('state_change', handleStateChange);
+    channel.bind(PUSHER_EVENT, handleData);
 
     return () => {
-      socket.disconnect();
+      channel.unbind(PUSHER_EVENT, handleData);
+      pusher.connection.unbind('state_change', handleStateChange);
+      pusher.unsubscribe(PUSHER_CHANNEL);
+      pusher.disconnect();
     };
-  }, [fetchHistory]);
+  }, []);
 
   return {
     data,
