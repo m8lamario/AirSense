@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
-import Pusher from 'pusher-js';
+import Pusher, { type Channel } from 'pusher-js';
 
 export interface AirData {
   temp: number;
@@ -54,7 +54,7 @@ export const useAirSense = () => {
 
   useEffect(() => {
     let pusher: Pusher | null = null;
-    let channel: Pusher.Channel | null = null;
+    let channel: Channel | null = null;
     let fallbackTimer: ReturnType<typeof setInterval> | null = null;
 
     const addData = (newData: AirData) => {
